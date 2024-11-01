@@ -1,6 +1,9 @@
-from tutorial_dataset import MyDataset
+from tutorial_dataset import MasksDataset
 
-dataset = MyDataset()
+train_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles_split/test/images"
+train_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles_split/test/masks"
+
+dataset = MasksDataset(train_images_dir, train_masks_dir)
 print(len(dataset))
 
 item = dataset[1234]

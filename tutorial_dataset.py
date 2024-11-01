@@ -9,7 +9,7 @@ from annotator.util import resize_image, HWC3
 from annotator.canny import CannyDetector
 
 
-class MyDataset(Dataset):
+class MasksDataset(Dataset):
     def __init__(self, images_dir: str, masks_dir: str, width=256, height=256):
         self.width = width
         self.height = height
@@ -39,6 +39,7 @@ class MyDataset(Dataset):
         # Normalize target images to [-1, 1].
         image = (image.astype(np.float32) / 127.5) - 1.0
 
-        return dict(jpg=image, txt=prompt, hint=mask)
+        # return dict(jpg=image, txt=prompt, hint=mask)
+        return dict(pixel_values=image, caption=prompt, hint=mask)
 
 
