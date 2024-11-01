@@ -11,34 +11,48 @@ from tqdm.auto import tqdm
 from tutorial_dataset import MasksDataset
 
 
+class StableDiffusion(nn.Module):
+    def __init__(self, vae, unet, text_encoder, tokenizer):
+        super().__init__()
+
+        self.tokenizer = tokenizer
+        self.text_encoder = text_encoder
+        self.vae = vae
+        self.unet = unet
+
+    def forward(self, images, captions):
+        # Encode image
+        latents = vae.encode(images).latent_dist.sample()
+        latents = latents * vae.config.scaling_factor
+
+        # Encode text
+        captions = tokenize_caption(captions, tokenizer)
+        text_embeddings = text_encoder(captions.to(device)).last_hidden_state
+
+        # Sample noise
+        noise = torch.randn_like(latents)
+        timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (batch_size,),
+                                  device=device).long()
+        noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+
+        # Predict noise
+        noise_pred = unet(noisy_latents, timesteps, text_embeddings).sample
+
+        return noise_pred, noise
+
+
 def tokenize_caption(caption, tokenizer):
     return tokenizer(caption, padding="max_length", truncation=True, max_length=77, return_tensors="pt").input_ids
 
 
-def train(unet, vae, text_encoder, tokenizer, train_dataloader, criterion, optimizer, noise_scheduler, lr_scheduler):
+def train(model, train_dataloader, criterion, optimizer, noise_scheduler, lr_scheduler):
     for epoch in range(num_epochs):
-        unet.train()
         for step, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
             # Move data to device
             images = batch["pixel_values"].to(device).permute(0, 3, 1, 2)
             captions = batch["caption"]
 
-            # Encode image
-            latents = vae.encode(images).latent_dist.sample()
-            latents = latents * vae.config.scaling_factor
-
-            # Encode text
-            captions = tokenize_caption(captions, tokenizer)
-            text_embeddings = text_encoder(captions.to(device)).last_hidden_state
-
-            # Sample noise
-            noise = torch.randn_like(latents)
-            timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (batch_size,),
-                                      device=device).long()
-            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-
-            # Predict noise
-            noise_pred = unet(noisy_latents, timesteps, text_embeddings).sample
+            noise_pred, noise = model(images, captions)
 
             # Compute loss
             loss = criterion(noise_pred, noise)
