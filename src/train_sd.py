@@ -12,13 +12,15 @@ from tutorial_dataset import MasksDataset
 
 
 class StableDiffusion(nn.Module):
-    def __init__(self, vae, unet, text_encoder, tokenizer):
+    def __init__(self, vae, unet, text_encoder, tokenizer, noise_scheduler):
         super().__init__()
 
         self.tokenizer = tokenizer
         self.text_encoder = text_encoder
         self.vae = vae
         self.unet = unet
+
+        self.noise_scheduler = noise_scheduler
 
     def forward(self, images, captions):
         # Encode image
@@ -45,7 +47,7 @@ def tokenize_caption(caption, tokenizer):
     return tokenizer(caption, padding="max_length", truncation=True, max_length=77, return_tensors="pt").input_ids
 
 
-def train(model, train_dataloader, criterion, optimizer, noise_scheduler, lr_scheduler):
+def train(model, train_dataloader, criterion, optimizer, lr_scheduler):
     for epoch in range(num_epochs):
         for step, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
             # Move data to device
@@ -132,11 +134,11 @@ if __name__ == "__main__":
     vae.requires_grad_(False)
     unet.train()
 
-    unet.to(device)
-    vae.to(device)
-    text_encoder.to(device)
+    model = StableDiffusion(vae, unet, text_encoder, tokenizer, noise_scheduler)
 
-    train(unet, vae, text_encoder, tokenizer, train_dataloader, criterion, optimizer, noise_scheduler, lr_scheduler)
+    model.to(device)
+
+    train(model, train_dataloader, criterion, optimizer, lr_scheduler)
 
     # 6. Save the final model
     unet.save_pretrained(output_dir)
