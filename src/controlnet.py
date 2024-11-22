@@ -31,14 +31,14 @@ class ControlNet(nn.Module):
 
     def forward(self, images, captions, conditions):
         latents = self.vae.encode(images).latent_dist.sample()
-        latents = latents * vae.config.scaling_factor
+        latents = latents * self.vae.config.scaling_factor
 
         captions = tokenize_caption(captions, self.tokenizer)
         text_embeddings = self.text_encoder(captions.to(images.device), return_dict=False)[0]
 
-        noise = torch.randn_like(latents)
-        timesteps = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (batch_size,),
-                                  device=images.device).long()
+        noise = torch.randn_like(latents).to(device=images.device, dtype=torch.float16)
+        timesteps = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (latents.shape[0],),
+                                  device=images.device, dtype=torch.float16).long()
         noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
 
         down_block_res_samples, mid_block_res_sample = self.controlnet(
@@ -65,17 +65,15 @@ def tokenize_caption(caption, tokenizer):
     return tokenizer(caption, padding="max_length", truncation=True, max_length=77, return_tensors="pt").input_ids
 
 
-def train(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerator):
+def train(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerator, output_dir, num_epochs=3):
     for epoch in range(num_epochs):
         for step, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
-            # Move data to device
-            images = batch["pixel_values"].to(accelerator.device).permute(0, 3, 1, 2)
-            conditions = batch["conditioning_pixel_values"].to(accelerator.device).permute(0, 3, 1, 2)
+            images = batch["pixel_values"].to(accelerator.device, dtype=torch.float16).permute(0, 3, 1, 2)
+            conditions = batch["conditioning_pixel_values"].to(accelerator.device, dtype=torch.float16).permute(0, 3, 1, 2)
             captions = batch["caption"]
 
             noise_pred, noise = model(images, captions, conditions)
 
-            # Compute loss
             loss = criterion(noise_pred, noise)
             accelerator.backward(loss)
 
@@ -83,20 +81,25 @@ def train(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerat
             lr_scheduler.step()
             optimizer.zero_grad()
 
-            # Logging
-            if step % 50 == 0:
+            if step % 1 == 0:
                 print(f"Epoch {epoch}, Step {step}, Loss: {loss.item()}")
+                print(noise_pred)
 
-        unet.save_pretrained(f"{output_dir}/checkpoint-{epoch}")
+
+
+        model.unet.save_pretrained(f"{output_dir}/checkpoint-epoch_{epoch}/unet")
+        model.controlnet.save_pretrained(f"{output_dir}/checkpoint-epoch_{epoch}/controlnet")
+        torch.save(model.state_dict(), f"{output_dir}/checkpoint-epoch_{epoch}/model")
+
         print(f"Epoch {epoch} completed and checkpoint saved.")
 
 
 if __name__ == "__main__":
     pretrained_model_name = "runwayml/stable-diffusion-v1-5"
-    output_dir = "./stable_diffusion_finetuned"
-    num_epochs = 3
+    output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/controlnet"
+    num_epochs = 1
     learning_rate = 5e-6
-    batch_size = 6
+    batch_size = 2
     image_size = 256
 
     accelerator = Accelerator()
@@ -128,9 +131,7 @@ if __name__ == "__main__":
     # train_masks_dir = r"F:\Internship\ITMO_ML\data\weakly_segmented\bubbles_split\valid\masks"
 
     train_dataset = MasksDataset(train_images_dir, train_masks_dir, width=image_size, height=image_size)
-    # Optionally, preprocess images to resize or normalize to the expected format
-
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
 
     device = accelerator.device
 
@@ -140,7 +141,7 @@ if __name__ == "__main__":
     controlnet.train()
 
     model = ControlNet(vae, unet, controlnet, text_encoder, tokenizer, noise_scheduler)
-    model.to(device)
+    model.to(device=device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
@@ -153,8 +154,12 @@ if __name__ == "__main__":
     model, train_dataloader, optimizer, lr_scheduler = accelerator.prepare(
         [model, train_dataloader, optimizer, lr_scheduler]
     )
+    model.to(dtype=torch.float16)
 
-    train(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerator)
+    train(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerator, output_dir, num_epochs=num_epochs)
 
-    unet.save_pretrained(output_dir)
+    model.unet.save_pretrained(f"{output_dir}/final_model_controlnet")
+    model.controlnet.save_pretrained(f"{output_dir}/final_model_unet")
+    torch.save(model.state_dict(), f"{output_dir}/final_model.pth")
+
     print("Training complete! Model saved to:", output_dir)
