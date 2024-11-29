@@ -5,8 +5,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-import torchsummary
-
 from transformers import AutoTokenizer, CLIPTextModel, CLIPVisionModelWithProjection
 from diffusers import DDPMScheduler, UNet2DConditionModel, ControlNetModel
 from diffusers import AutoencoderKL
@@ -242,21 +240,21 @@ class IPAdapter(nn.Module):
     def load_from_checkpoint(self, ckpt_path: str):
         # Calculate original checksums
         orig_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
-        orig_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
+        # orig_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
 
         state_dict = torch.load(ckpt_path, map_location="cpu")
 
         # Load state dict for image_proj_model and adapter_modules
         self.image_proj_model.load_state_dict(state_dict["image_proj"], strict=True)
-        self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=True)
+        # self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=True)
 
         # Calculate new checksums
         new_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
-        new_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
+        # new_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
 
         # Verify if the weights have changed
         assert orig_ip_proj_sum != new_ip_proj_sum, "Weights of image_proj_model did not change!"
-        assert orig_adapter_sum != new_adapter_sum, "Weights of adapter_modules did not change!"
+        # assert orig_adapter_sum != new_adapter_sum, "Weights of adapter_modules did not change!"
 
         print(f"Successfully loaded weights from checkpoint {ckpt_path}")
 
@@ -339,7 +337,7 @@ def train(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerat
             lr_scheduler.step()
             optimizer.zero_grad()
 
-            if step % 50 == 0:
+            if step % 1 == 0:
                 print(f"Epoch {epoch}, Step {step}, Loss: {loss.item()}")
                 #print(noise_pred)
 
@@ -386,10 +384,11 @@ if __name__ == "__main__":
         clip_embeddings_dim=image_encoder.config.projection_dim,
         clip_extra_context_tokens=4,
     )
-    adapter_modules = init_adapter_modules(unet)
+    # adapter_modules = init_adapter_modules(unet)
+    adapter_modules = None
     ip_adapter = IPAdapter(
         unet, image_proj_model, adapter_modules,
-        "/out/ip-adapter_sd15.bin"
+        r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/models/ip-adapter_sd15.bin"
     )
 
     criterion = nn.MSELoss()
@@ -403,7 +402,7 @@ if __name__ == "__main__":
     # train_masks_dir = r"F:\Internship\ITMO_ML\data\weakly_segmented\bubbles_split\valid\masks"
 
     train_dataset = MasksDataset(train_images_dir, train_masks_dir, width=image_size, height=image_size)
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
 
     device = accelerator.device
 
