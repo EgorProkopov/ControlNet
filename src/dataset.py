@@ -14,20 +14,22 @@ class MasksDataset(Dataset):
 
         self.datadir = images_dir
         self.masksdir = masks_dir
-        self.data = os.listdir(self.datadir)
+        self.images_list = os.listdir(self.datadir)
+        self.masks_list = os.listdir(self.masksdir)
 
     def __len__(self):
-        return len(self.data)
+        return len(self.images_list)
 
     def __getitem__(self, idx):
-        item = self.data[idx]
+        image_name = self.images_list[idx]
+        masks_name = self.masks_list[idx]
         prompt = "froth flotation bubbles"
 
-        image = cv2.imread(osp.join(self.datadir, item))
+        image = cv2.imread(osp.join(self.datadir, image_name))
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, (self.width, self.height))
 
-        mask = cv2.imread(osp.join(self.masksdir, item))
+        mask = cv2.imread(osp.join(self.masksdir, masks_name))
         mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
         mask = cv2.resize(mask, (self.width, self.height))
 

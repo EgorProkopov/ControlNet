@@ -10,6 +10,7 @@ from diffusers import DDPMScheduler, UNet2DConditionModel, ControlNetModel
 from diffusers import AutoencoderKL
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
+from peft import LoraConfig, get_peft_model
 
 from dataset import MasksDataset
 
@@ -233,28 +234,20 @@ class IPAdapter(nn.Module):
     def forward(self, noisy_latents, timesteps, encoder_hidden_states, image_embeds):
         ip_tokens = self.image_proj_model(image_embeds['image_embeds'])
         encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)
-        # Predict the noise residual
         noise_pred = self.unet(noisy_latents, timesteps, encoder_hidden_states).sample
         return noise_pred
 
     def load_from_checkpoint(self, ckpt_path: str):
-        # Calculate original checksums
         orig_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
-        # orig_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
 
         state_dict = torch.load(ckpt_path, map_location="cpu")
 
-        # Load state dict for image_proj_model and adapter_modules
         self.image_proj_model.load_state_dict(state_dict["image_proj"], strict=True)
-        # self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=True)
 
-        # Calculate new checksums
         new_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
-        # new_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
 
         # Verify if the weights have changed
         assert orig_ip_proj_sum != new_ip_proj_sum, "Weights of image_proj_model did not change!"
-        # assert orig_adapter_sum != new_adapter_sum, "Weights of adapter_modules did not change!"
 
         print(f"Successfully loaded weights from checkpoint {ckpt_path}")
 
@@ -272,6 +265,11 @@ class StableDiffusionIP(nn.Module):
         self.noise_scheduler = noise_scheduler
 
     def forward(self, images, captions, conditions):
+        self.text_encoder = self.text_encoder.to(dtype=torch.float16)
+        self.image_encoder = self.image_encoder.to(dtype=torch.float16)
+        self.vae = self.vae.to(dtype=torch.float16)
+        self.ip_adapter = self.ip_adapter.to(dtype=torch.float16)
+
         latents = self.vae.encode(images).latent_dist.sample()
         latents = latents * self.vae.config.scaling_factor
 
@@ -333,13 +331,14 @@ def train(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerat
             loss = criterion(noise_pred, noise)
             accelerator.backward(loss)
 
+            model.float()
+
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
 
             if step % 1 == 0:
                 print(f"Epoch {epoch}, Step {step}, Loss: {loss.item()}")
-                #print(noise_pred)
 
 
         model.ip_adapter.save_pretrained(f"{output_dir}/checkpoint-{epoch}/ip_adapter.pth")
@@ -353,11 +352,16 @@ if __name__ == "__main__":
     output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/ip_adapter"
     num_epochs = 1
     learning_rate = 5e-6
-    batch_size = 12
+    batch_size = 2
     image_size = 224
-    print_summary = True
+    print_summary = False
 
     accelerator = Accelerator()
+    lora_config = LoraConfig(
+        r=4,
+        lora_alpha=32,
+        lora_dropout=0.1
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(
         "runwayml/stable-diffusion-v1-5",
@@ -378,6 +382,8 @@ if __name__ == "__main__":
         "runwayml/stable-diffusion-v1-5", subfolder="unet"
     )
 
+    unet = get_peft_model(unet, lora_config)
+    image_encoder = get_peft_model(image_encoder, lora_config)
 
     image_proj_model = ImageProjModel(
         cross_attention_dim=unet.config.cross_attention_dim,
@@ -408,7 +414,7 @@ if __name__ == "__main__":
 
     text_encoder.requires_grad_(False)
     vae.requires_grad_(False)
-    image_encoder.requires_grad_(False)
+    image_encoder.train()
     ip_adapter.train()
 
     model = StableDiffusionIP(vae, ip_adapter, image_encoder, text_encoder, tokenizer, noise_scheduler)
