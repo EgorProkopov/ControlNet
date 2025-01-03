@@ -1,25 +1,14 @@
-import os
-import numpy as np
-from tqdm.auto import tqdm
-from PIL import Image
-
 import torch
 import torch.nn as nn
+from accelerate import Accelerator
+from diffusers import AutoencoderKL
+from diffusers import DDPMScheduler, UNet2DConditionModel, ControlNetModel, StableDiffusionControlNetPipeline
+from diffusers.optimization import get_cosine_schedule_with_warmup
 from torch.utils.data import DataLoader
-from torchvision.utils import save_image
-from torchvision.transforms import ToTensor, ToPILImage
-
+from tqdm.auto import tqdm
 from transformers import AutoTokenizer, CLIPTextModel
 
-from diffusers import DDPMScheduler, UNet2DConditionModel, ControlNetModel, StableDiffusionControlNetPipeline
-from diffusers import AutoencoderKL
-from diffusers.optimization import get_cosine_schedule_with_warmup
-from diffusers.utils import make_image_grid
-
-from accelerate import Accelerator
-
 from src.dataset import MasksDataset
-from src.controlnet.controlnet_inference import load_controlnet_pipeline, controlnet_inference
 from src.image_generation import generate_images
 
 
