@@ -160,7 +160,7 @@ class GenerateImagesCallback(pl.Callback):
         if global_step % self.log_every_n_steps == 0 and global_step > 0:
             pl_module.eval()
             with torch.no_grad():
-                captions = batch["caption"]  # Use the first caption
+                captions = batch["caption"]
                 conditions = batch["conditioning_pixel_values"].permute(0, 3, 1, 2)
                 captions = captions
                 conditions = conditions
@@ -172,8 +172,8 @@ class GenerateImagesCallback(pl.Callback):
                 for i, img in enumerate(generated_images):
                     img_path = os.path.join(self.log_dir, f"step_{global_step}_image_{i}.png")
 
-                    pil_conditions = self.to_pil(conditions[i])  # Convert condition to PIL
-                    pil_generated_img = self.to_pil(img)  # Convert generated image to PIL
+                    pil_conditions = self.to_pil(conditions[i])
+                    pil_generated_img = self.to_pil(img)
                     grid = make_image_grid([pil_conditions, pil_generated_img], rows=1, cols=2)
 
                     save_image(self.to_tensor(grid).unsqueeze(0), img_path)
