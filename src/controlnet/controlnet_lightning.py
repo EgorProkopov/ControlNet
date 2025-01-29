@@ -28,7 +28,7 @@ def tokenize_caption(caption, tokenizer):
 
 
 class ControlNetLightningModule(pl.LightningModule):
-    def __init__(self, vae, unet, controlnet, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps):
+    def __init__(self, vae, unet, controlnet, text_encoder, tokenizer, noise_scheduler, accelerator, lr, num_training_steps):
         super().__init__()
         self.tokenizer = tokenizer
         self.text_encoder = text_encoder
@@ -39,6 +39,8 @@ class ControlNetLightningModule(pl.LightningModule):
         self.criterion = nn.MSELoss()
         self.lr = lr
         self.num_training_steps = num_training_steps
+
+        self.accelerator = accelerator
 
     def forward(self, images, captions, conditions):
         # Encoding
@@ -89,15 +91,16 @@ class ControlNetLightningModule(pl.LightningModule):
             unet=self.unet,
             controlnet=self.controlnet,
             scheduler=self.noise_scheduler,
-            safety_checker=None,  # Optional: Add a safety checker if needed
-            feature_extractor=None  # Optional: Add a feature extractor if needed
+            requires_safety_checker = False,
+            safety_checker=None,
+            feature_extractor=None
         )
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         pipeline.to(device)
 
         generated_images = pipeline(
             prompt=captions,
-            image=conditions,  # Conditioning images
+            image=conditions,
             num_inference_steps=num_inference_steps,
         ).images
         return generated_images
@@ -119,11 +122,12 @@ class ControlNetLightningModule(pl.LightningModule):
             num_warmup_steps=500,
             num_training_steps=self.num_training_steps,
         )
+        # optimizer = self.accelerator.prepare(optimizer)
         return [optimizer], [{"scheduler": lr_scheduler, "interval": "step"}]
 
 
 class ControlNetDataModule(pl.LightningDataModule):
-    def __init__(self, train_images_dir, train_masks_dir, val_images_dir, val_masks_dir, batch_size, image_size):
+    def __init__(self, train_images_dir, train_masks_dir, val_images_dir, val_masks_dir, batch_size, image_size, num_workers=6):
         super().__init__()
         self.train_images_dir = train_images_dir
         self.train_masks_dir = train_masks_dir
@@ -132,6 +136,8 @@ class ControlNetDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.image_size = image_size
 
+        self.num_workers = num_workers
+
         self.setup()
 
     def setup(self, stage=None):
@@ -139,10 +145,10 @@ class ControlNetDataModule(pl.LightningDataModule):
         self.val_dataset = MasksDataset(self.val_images_dir, self.val_masks_dir, width=self.image_size, height=self.image_size)
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=1, shuffle=False)
+        return DataLoader(self.val_dataset, batch_size=1, num_workers=self.num_workers, shuffle=False)
 
 
 class GenerateImagesCallback(pl.Callback):
@@ -194,8 +200,10 @@ def main():
     output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/controlnet"
     num_epochs = 10
     learning_rate = 5e-6
-    batch_size = 2
-    image_size = 256
+    batch_size = 1
+    image_size = 128
+
+    accelerator = Accelerator()
 
     tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name, subfolder="tokenizer", use_fast=False)
     text_encoder = CLIPTextModel.from_pretrained(pretrained_model_name, subfolder="text_encoder").eval()
@@ -204,11 +212,11 @@ def main():
     controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny").train()
     noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
 
-    train_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/CTCI/data/bubbles_split/train/images"
-    train_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/CTCI/data/bubbles_split/train/images_masks"
+    train_images_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\train\images"
+    train_masks_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\train\masks"
 
-    val_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/CTCI/data/bubbles_split/valid/images"
-    val_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/CTCI/data/bubbles_split/valid/images_masks"
+    val_images_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\valid\images"
+    val_masks_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\valid\masks"
 
     data_module = ControlNetDataModule(
         train_images_dir, train_masks_dir, val_images_dir, val_masks_dir,
@@ -217,9 +225,11 @@ def main():
 
     num_training_steps = num_epochs * len(data_module.train_dataloader())
     model = ControlNetLightningModule(
-        vae, unet, controlnet, text_encoder, tokenizer, noise_scheduler,
+        vae, unet, controlnet, text_encoder, tokenizer, noise_scheduler, accelerator,
         lr=learning_rate, num_training_steps=num_training_steps
     )
+
+    model, data_module = accelerator.prepare([model, data_module])
 
     log_callback = GenerateImagesCallback(
         log_dir="/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/controlnet/generated_images",
@@ -228,11 +238,13 @@ def main():
 
     trainer = Trainer(
         max_epochs=num_epochs,
-        accelerator='mps',
-        precision='bf16-mixed',
+        accelerator='cuda',
+        devices=accelerator.num_processes,
+        precision=16 if accelerator.mixed_precision == "fp16" else 32,
+        strategy="auto",
         default_root_dir=output_dir,
         log_every_n_steps=1000,
-        accumulate_grad_batches=3,
+        accumulate_grad_batches=2,
         callbacks=[log_callback]
     )
 
