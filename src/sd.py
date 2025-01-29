@@ -78,12 +78,11 @@ def training(model, train_dataloader, criterion, optimizer, lr_scheduler, accele
             lr_scheduler.step()
             optimizer.zero_grad()
 
-            if step % 1 == 0:
+            if step % 1000 == 0:
                 print(f"Epoch {epoch}, Step {step}, Loss: {loss.item()}")
                 # print(noise_pred)
 
         model.unet.save_pretrained(f"{output_dir}/checkpoint-epoch_{epoch}/unet")
-        torch.save(model.state_dict(), f"{output_dir}/checkpoint-epoch_{epoch}/model")
 
         print(f"Epoch {epoch} completed and checkpoint saved.")
 
@@ -91,17 +90,12 @@ def training(model, train_dataloader, criterion, optimizer, lr_scheduler, accele
 def main():
     pretrained_model_name = "runwayml/stable-diffusion-v1-5"
     output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/stable_diffusion"
-    num_epochs = 1
+    num_epochs = 10
     learning_rate = 5e-6
     batch_size = 6
-    image_size = 64
+    image_size = 256
 
     accelerator = Accelerator()
-    lora_config = LoraConfig(
-        r=4,
-        lora_alpha=32,
-        lora_dropout=0.1
-    )
 
     tokenizer = AutoTokenizer.from_pretrained(
     "runwayml/stable-diffusion-v1-5",
@@ -118,13 +112,12 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(
         "runwayml/stable-diffusion-v1-5", subfolder="unet"
     )
-    unet = get_peft_model(unet, lora_config)
     criterion = nn.MSELoss()
 
     noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
 
-    train_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles_split/test/images"
-    train_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles_split/test/masks"
+    train_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/images"
+    train_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/masks"
 
     # train_images_dir = r"F:\Internship\ITMO_ML\data\weakly_segmented\bubbles_split\valid\images"
     # train_masks_dir = r"F:\Internship\ITMO_ML\data\weakly_segmented\bubbles_split\valid\masks"
@@ -156,7 +149,7 @@ def main():
 
     training(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerator, output_dir, num_epochs=num_epochs)
 
-    model.unet.save_pretrained(f"{output_dir}/final_model_sd")
+    model.unet.save_pretrained(f"{output_dir}/final_unet")
     torch.save(model.state_dict(), f"{output_dir}/final_model.pth")
 
     print("Training complete! Model saved to:", output_dir)
