@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import maplotlib.pyplot as plt
 
 from torchvision.transforms import ToTensor, ToPILImage
 from tqdm.auto import tqdm
@@ -115,6 +116,16 @@ class ControlNetLightningModule(pl.LightningModule):
         self.log("train_loss", loss)
         return loss
 
+    def validation_step(self, batch, batch_idx):
+        images = batch["pixel_values"].to(self.device).permute(0, 3, 1, 2)
+        conditions = batch["conditioning_pixel_values"].to(self.device).permute(0, 3, 1, 2)
+        captions = batch["caption"]
+
+        noise_pred, noise = self(images, captions, conditions)
+        loss = self.criterion(noise_pred, noise)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        return loss
+
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
         lr_scheduler = get_cosine_schedule_with_warmup(
@@ -195,6 +206,29 @@ class GenerateImagesCallback(pl.Callback):
             pl_module.train()
 
 
+class TrainingLossCallback(pl.Callback):
+    def __init__(self, log_dir):
+        self.train_losses = []
+        self.val_losses = []
+        self.log_dir = log_dir
+        os.makedirs(log_dir, exist_ok=True)
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        self.train_losses.append(trainer.callback_metrics['train_loss'].item())
+        self.val_losses.append(trainer.callback_metrics['val_loss'].item())
+
+    def on_train_end(self, trainer, pl_module):
+        plt.figure(figsize=(10, 5))
+        plt.plot(range(1, len(self.train_losses) + 1), self.train_losses, label='Training Loss')
+        plt.plot(range(1, len(self.val_losses) + 1), self.val_losses, label='Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.title('Training and Validation Loss')
+        plt.savefig(os.path.join(self.log_dir, 'loss_plot.png'))
+        plt.close()
+
+
 def main():
     pretrained_model_name = "runwayml/stable-diffusion-v1-5"
     output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/controlnet"
@@ -232,20 +266,23 @@ def main():
     model, data_module = accelerator.prepare([model, data_module])
 
     log_callback = GenerateImagesCallback(
-        log_dir="/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/controlnet/generated_images",
+        log_dir="F:\ITMO_ML\ControlNet\out\logs\controlnet\generated_images",
         log_every_n_steps=1000
+    )
+    loss_callback = TrainingLossCallback(
+        log_dir="F:\ITMO_ML\ControlNet\out\logs\controlnet"
     )
 
     trainer = Trainer(
         max_epochs=num_epochs,
         accelerator='cuda',
         devices=accelerator.num_processes,
-        precision=16 if accelerator.mixed_precision == "fp16" else 32,
+        precision='16',
         strategy="auto",
         default_root_dir=output_dir,
         log_every_n_steps=1000,
         accumulate_grad_batches=2,
-        callbacks=[log_callback]
+        callbacks=[log_callback, loss_callback]
     )
 
     trainer.fit(model, datamodule=data_module)
