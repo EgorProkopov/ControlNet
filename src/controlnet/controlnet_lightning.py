@@ -15,7 +15,7 @@ import lightning.pytorch as pl
 
 from transformers import AutoTokenizer, CLIPTextModel
 from diffusers import DDPMScheduler, AutoencoderKL, UNet2DConditionModel, ControlNetModel, \
-    StableDiffusionControlNetPipeline, EulerDiscreteScheduler
+    StableDiffusionControlNetPipeline, EulerDiscreteScheduler, UniPCMultistepScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from diffusers.utils import make_image_grid
 
@@ -97,8 +97,11 @@ class ControlNetLightningModule(pl.LightningModule):
             safety_checker=None,
             feature_extractor=None
         )
+        # pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         pipeline.to(device)
+        pipeline.unet.eval()
+        pipeline.controlnet.eval()
 
         generated_images = pipeline(
             prompt=captions,
@@ -255,9 +258,9 @@ def main():
     output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/controlnet"
     num_epochs = 6
     learning_rate = 5e-5
-    batch_size = 6
-    image_size = 256
-    log_step = 1000
+    batch_size = 1
+    image_size = 512
+    log_step = 100
 
     accelerator = Accelerator()
 
@@ -269,8 +272,8 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(pretrained_model_name, subfolder="unet")
     unet.requires_grad_(False)
     controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny").train()
-    # noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
-    noise_scheduler = EulerDiscreteScheduler.from_pretrained(pretrained_model_name, subfolder="scheduler")
+    noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
+    # noise_scheduler = EulerDiscreteScheduler.from_pretrained(pretrained_model_name, subfolder="scheduler")
 
     # train_images_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\train\images"
     # train_masks_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\train\masks"
@@ -315,7 +318,7 @@ def main():
         default_root_dir=output_dir,
         log_every_n_steps=log_step,
         # accumulate_grad_batches=2,
-        callbacks=[loss_callback]
+        callbacks=[log_callback, loss_callback]
     )
 
     trainer.fit(model, datamodule=data_module)
