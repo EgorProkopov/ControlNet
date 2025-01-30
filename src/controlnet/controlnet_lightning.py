@@ -1,6 +1,7 @@
 import os
 import numpy as np
-import maplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+from numpy.distutils.lib2def import output_def
 
 from torchvision.transforms import ToTensor, ToPILImage
 from tqdm.auto import tqdm
@@ -14,7 +15,7 @@ import lightning.pytorch as pl
 
 from transformers import AutoTokenizer, CLIPTextModel
 from diffusers import DDPMScheduler, AutoencoderKL, UNet2DConditionModel, ControlNetModel, \
-    StableDiffusionControlNetPipeline
+    StableDiffusionControlNetPipeline, EulerDiscreteScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from diffusers.utils import make_image_grid
 
@@ -207,50 +208,81 @@ class GenerateImagesCallback(pl.Callback):
 
 
 class TrainingLossCallback(pl.Callback):
-    def __init__(self, log_dir):
+    def __init__(self, log_dir, log_every_n_steps=1000):
         self.train_losses = []
         self.val_losses = []
         self.log_dir = log_dir
+        self.log_every_n_steps = log_every_n_steps
         os.makedirs(log_dir, exist_ok=True)
 
-    def on_train_epoch_end(self, trainer, pl_module):
-        self.train_losses.append(trainer.callback_metrics['train_loss'].item())
-        self.val_losses.append(trainer.callback_metrics['val_loss'].item())
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        global_step = trainer.global_step
+
+        if global_step % self.log_every_n_steps == 0:
+            train_loss = trainer.callback_metrics['train_loss'].item()
+            self.train_losses.append(train_loss)
+            val_loss = trainer.callback_metrics['val_loss'].item() if 'val_loss' in trainer.callback_metrics else None
+            if val_loss:
+                self.val_losses.append(val_loss)
+
+            plt.figure(figsize=(10, 5))
+            plt.plot(range(1, len(self.train_losses) + 1), self.train_losses, label='Training Loss')
+            if self.val_losses:
+                plt.plot(range(1, len(self.val_losses) + 1), self.val_losses, label='Validation Loss')
+            plt.xlabel('Training Steps')
+            plt.ylabel('Loss')
+            plt.legend()
+            plt.title(f'Training and Validation Loss at Step {global_step}')
+            plt.savefig(os.path.join(self.log_dir, f'loss_plot_step_{global_step}.png'))
+            plt.close()
 
     def on_train_end(self, trainer, pl_module):
         plt.figure(figsize=(10, 5))
         plt.plot(range(1, len(self.train_losses) + 1), self.train_losses, label='Training Loss')
-        plt.plot(range(1, len(self.val_losses) + 1), self.val_losses, label='Validation Loss')
-        plt.xlabel('Epoch')
+        if self.val_losses:
+            plt.plot(range(1, len(self.val_losses) + 1), self.val_losses, label='Validation Loss')
+        plt.xlabel('Training Steps')
         plt.ylabel('Loss')
         plt.legend()
-        plt.title('Training and Validation Loss')
-        plt.savefig(os.path.join(self.log_dir, 'loss_plot.png'))
+        plt.title(f'Final Training and Validation Loss')
+        plt.savefig(os.path.join(self.log_dir, 'final_loss_plot.png'))
         plt.close()
 
 
 def main():
     pretrained_model_name = "runwayml/stable-diffusion-v1-5"
+    # output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/controlnet"
     output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/controlnet"
-    num_epochs = 10
-    learning_rate = 5e-6
-    batch_size = 1
-    image_size = 128
+    num_epochs = 6
+    learning_rate = 5e-5
+    batch_size = 6
+    image_size = 256
+    log_step = 1000
 
     accelerator = Accelerator()
 
     tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name, subfolder="tokenizer", use_fast=False)
-    text_encoder = CLIPTextModel.from_pretrained(pretrained_model_name, subfolder="text_encoder").eval()
-    vae = AutoencoderKL.from_pretrained(pretrained_model_name, subfolder="vae").eval()
-    unet = UNet2DConditionModel.from_pretrained(pretrained_model_name, subfolder="unet").eval()
+    text_encoder = CLIPTextModel.from_pretrained(pretrained_model_name, subfolder="text_encoder")
+    text_encoder.requires_grad_(False)
+    vae = AutoencoderKL.from_pretrained(pretrained_model_name, subfolder="vae")
+    vae.requires_grad_(False)
+    unet = UNet2DConditionModel.from_pretrained(pretrained_model_name, subfolder="unet")
+    unet.requires_grad_(False)
     controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny").train()
-    noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
+    # noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
+    noise_scheduler = EulerDiscreteScheduler.from_pretrained(pretrained_model_name, subfolder="scheduler")
 
-    train_images_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\train\images"
-    train_masks_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\train\masks"
+    # train_images_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\train\images"
+    # train_masks_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\train\masks"
+    #
+    # val_images_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\valid\images"
+    # val_masks_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\valid\masks"
 
-    val_images_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\valid\images"
-    val_masks_dir = r"F:\ITMO_ML\data\bubbles\weakly_segmented\bubbles_split\valid\masks"
+    train_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/images"
+    train_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/masks"
+
+    val_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/images"
+    val_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/masks"
 
     data_module = ControlNetDataModule(
         train_images_dir, train_masks_dir, val_images_dir, val_masks_dir,
@@ -266,23 +298,24 @@ def main():
     model, data_module = accelerator.prepare([model, data_module])
 
     log_callback = GenerateImagesCallback(
-        log_dir="F:\ITMO_ML\ControlNet\out\logs\controlnet\generated_images",
-        log_every_n_steps=1000
+        log_dir="/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/controlnet/generated_images",
+        log_every_n_steps=log_step
     )
     loss_callback = TrainingLossCallback(
-        log_dir="F:\ITMO_ML\ControlNet\out\logs\controlnet"
+        log_dir="/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/controlnet",
+        log_every_n_steps=log_step
     )
 
     trainer = Trainer(
         max_epochs=num_epochs,
-        accelerator='cuda',
+        accelerator='mps',
         devices=accelerator.num_processes,
-        precision='16',
+        precision='bf16',
         strategy="auto",
         default_root_dir=output_dir,
-        log_every_n_steps=1000,
-        accumulate_grad_batches=2,
-        callbacks=[log_callback, loss_callback]
+        log_every_n_steps=log_step,
+        # accumulate_grad_batches=2,
+        callbacks=[loss_callback]
     )
 
     trainer.fit(model, datamodule=data_module)

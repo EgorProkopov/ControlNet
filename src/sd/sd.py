@@ -89,7 +89,7 @@ def training(model, train_dataloader, criterion, optimizer, lr_scheduler, accele
 
 def main():
     pretrained_model_name = "runwayml/stable-diffusion-v1-5"
-    output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/stable_diffusion"
+    output_dir = r"/out/stable_diffusion"
     num_epochs = 10
     learning_rate = 5e-6
     batch_size = 6
