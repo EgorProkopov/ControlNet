@@ -259,7 +259,7 @@ class IPAdapter(nn.Module):
             self.load_from_checkpoint(ckpt_path)
 
     def forward(self, noisy_latents, timesteps, encoder_hidden_states, image_embeds):
-        ip_tokens = self.image_proj_model(image_embeds['image_embeds'])
+        ip_tokens = self.image_proj_model(image_embeds['image_embeds'].image_embeds)
         encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)
         noise_pred = self.unet(noisy_latents, timesteps, encoder_hidden_states).sample
         return noise_pred
@@ -326,25 +326,7 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
 
     @torch.no_grad()
     def inference(self, captions, conditions, num_inference_steps=100, guidance_scale=7.5, height=512, width=512):
-        self.eval()
-
-        pipeline = StableDiffusionPipeline(
-            vae=self.vae,
-            text_encoder=self.text_encoder,
-            tokenizer=self.tokenizer,
-            unet=self.ip_adapter.unet,
-            scheduler=self.noise_scheduler,
-            safety_checker=None,
-            requires_safety_checker=False,
-            feature_extractor=None
-        )
-
         device = self.device
-        pipeline = pipeline.to(device)
-        pipeline.set_progress_bar_config(disable=True)
-
-        conditions = conditions.permute(0, 3, 1, 2)  # [B, C, H, W]
-        conditions = conditions.clamp(0, 1)
 
         image_embeds = self.image_encoder(conditions).image_embeds
         ip_tokens = self.ip_adapter.image_proj_model(image_embeds)
@@ -371,11 +353,9 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
         self.noise_scheduler.set_timesteps(num_inference_steps, device=device)
 
         for t in self.noise_scheduler.timesteps:
-            # Classifier-free guidance
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.noise_scheduler.scale_model_input(latent_model_input, t)
 
-            # Предсказание шума
             noise_pred = self.ip_adapter.unet(
                 latent_model_input,
                 t,
@@ -383,11 +363,9 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
                 return_dict=False,
             )[0]
 
-            # Разделяем предсказания для guidance
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
             noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
-            # Шаг шедулера
             latents = self.noise_scheduler.step(noise_pred, t, latents).prev_sample
 
         # Декодируем
@@ -405,12 +383,12 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
 
 if __name__ == "__main__":
     pretrained_model_name = "runwayml/stable-diffusion-v1-5"
-    output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/controlnet"
+    output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/sd_ipa"
     num_epochs = 2
     learning_rate = 5e-5
     batch_size = 6
     image_size = 224
-    log_step = 100
+    log_step = 5
 
     accelerator = Accelerator()
 
