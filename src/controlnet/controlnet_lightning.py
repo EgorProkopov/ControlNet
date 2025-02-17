@@ -22,7 +22,7 @@ from diffusers.utils import make_image_grid
 from lightning.pytorch import Trainer
 from accelerate import Accelerator
 
-from src.dataset import MasksDataset
+from src.data.mask2image_dataset import Mask2ImageDataset
 
 
 def tokenize_caption(caption, tokenizer):

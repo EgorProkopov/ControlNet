@@ -7,7 +7,7 @@ import numpy as np
 from torch.utils.data import Dataset
 
 
-class MasksDataset(Dataset):
+class Mask2ImageDataset(Dataset):
     def __init__(self, images_dir: str, masks_dir: str, width=256, height=256):
         self.width = width
         self.height = height
@@ -35,10 +35,8 @@ class MasksDataset(Dataset):
 
         mask = mask.astype(np.float32) / 255.0
 
-        # Normalize target images to [-1, 1].
         image = (image.astype(np.float32) / 127.5) - 1.0
 
-        # return dict(jpg=image, txt=prompt, hint=mask)
         return dict(pixel_values=image, caption=prompt, conditioning_pixel_values=mask)
 
 
