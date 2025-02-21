@@ -150,7 +150,6 @@ class IPAttnProcessor(nn.Module):
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
         else:
-            # get encoder_hidden_states, ip_hidden_states
             end_pos = encoder_hidden_states.shape[1] - self.num_tokens
             encoder_hidden_states, ip_hidden_states = (
                 encoder_hidden_states[:, :end_pos, :],
@@ -283,7 +282,7 @@ class IPAdapter(nn.Module):
 
 class IPAdapterLightningModule(BaseDiffusionLightningModule):
     def __init__(self, vae, unet, text_encoder, tokenizer, image_encoder, noise_scheduler, lr, num_training_steps):
-        super().__init__(vae, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps)
+        super().__init__(vae, unet, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps)
 
         adapter_modules = init_adapter_modules(unet)
         self.image_proj = ImageProjModel(
@@ -299,26 +298,6 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
         self.image_processor = CLIPImageProcessor()
         self.image_encoder = image_encoder
         self.image_encoder.requires_grad_(False)
-
-        inference_noise_scheduler = DDIMScheduler(
-            num_train_timesteps=1000,
-            beta_start=0.00095,
-            beta_end=0.016,
-            beta_schedule="scaled_linear",
-            clip_sample=False,
-            set_alpha_to_one=False,
-            steps_offset=1,
-        )
-
-        self.pipe = StableDiffusionPipeline(
-            vae=vae,
-            unet=unet,
-            text_encoder=text_encoder,
-            tokenizer=tokenizer,
-            scheduler=inference_noise_scheduler,
-            safety_checker=None,
-            feature_extractor=None,
-        )
 
     def forward(self, images, captions, conditions):
         latents = self.vae.encode(images).latent_dist.sample()
@@ -352,10 +331,12 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
 
         return generator
 
-    def set_scale(self, scale):
-        for attn_processor in self.pipe.unet.attn_processors.values():
+    def set_scale(self, pipe, scale):
+        for attn_processor in pipe.unet.attn_processors.values():
             if isinstance(attn_processor, IPAttnProcessor):
                 attn_processor.scale = scale
+
+        return pipe
 
     @torch.inference_mode()
     def get_image_embeds(self, pil_image=None, clip_image_embeds=None):
@@ -372,32 +353,42 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
 
     @torch.no_grad()
     def inference(
-            self, pil_image, prompt, clip_image_embeds=None,
+            self, captions, conditions, clip_image_embeds=None,
             negative_prompt="best quality regular shapes even surface round metallicslippery polished smooth",
-            num_inference_steps=100, guidance_scale=7.5, scale=1.0, num_samples=4, seed=None
+            num_inference_steps=100, guidance_scale=7.5, scale=1.0, num_samples=1, seed=None
     ):
         """
             Generate images in inference mode
             Copied from https://github.com/tencent-ailab/IP-Adapter/blob/main/ip_adapter/ip_adapter.py
         """
-        self.set_scale(scale)
+        pipe = StableDiffusionPipeline(
+            vae=self.vae,
+            unet=self.unet,
+            text_encoder=self.text_encoder,
+            tokenizer=self.tokenizer,
+            scheduler=self.noise_scheduler,
+            safety_checker=None,
+            feature_extractor=None,
+        )
+        pipe = self.set_scale(pipe, scale)
 
-        if pil_image is not None:
-            num_prompts = 1 if isinstance(pil_image, Image.Image) else len(pil_image)
+        pipe = pipe.to(self.device)
+
+        if conditions is not None:
+            num_prompts = 1 if isinstance(conditions, Image.Image) else len(conditions)
         else:
             num_prompts = clip_image_embeds.size(0)
-
 
         if negative_prompt is None:
             negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
 
-        if not isinstance(prompt, List):
-            prompt = [prompt] * num_prompts
+        if not isinstance(captions, List):
+            captions = [captions] * num_prompts
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
 
         image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(
-            pil_image=pil_image, clip_image_embeds=clip_image_embeds
+            pil_image=conditions, clip_image_embeds=clip_image_embeds
         )
         bs_embed, seq_len, _ = image_prompt_embeds.shape
         image_prompt_embeds = image_prompt_embeds.repeat(1, num_samples, 1)
@@ -406,8 +397,8 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
 
         with torch.inference_mode():
-            prompt_embeds_, negative_prompt_embeds_ = self.pipe.encode_prompt(
-                prompt,
+            prompt_embeds_, negative_prompt_embeds_ = pipe.encode_prompt(
+                captions,
                 device=self.device,
                 num_images_per_prompt=num_samples,
                 do_classifier_free_guidance=True,
@@ -418,7 +409,7 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
 
         generator = self.get_generator(seed, self.device)
 
-        images = self.pipe(
+        images = pipe(
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             guidance_scale=guidance_scale,
@@ -432,11 +423,13 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
 if __name__ == "__main__":
     pretrained_model_name = "runwayml/stable-diffusion-v1-5"
     output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/sd_ipa"
+    images_logs_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/sd_ipa/generated_images"
+    loss_logs_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/sd_ipa"
     num_epochs = 2
     learning_rate = 5e-5
-    batch_size = 6
+    batch_size = 12
     image_size = 224
-    log_step = 5
+    log_step = 250
 
     accelerator = Accelerator()
 
@@ -493,11 +486,11 @@ if __name__ == "__main__":
     model, data_module = accelerator.prepare([model, data_module])
 
     log_callback = GenerateImagesCallback(
-        log_dir="/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/controlnet/generated_images",
+        log_dir=images_logs_dir,
         log_every_n_steps=log_step
     )
     loss_callback = TrainingLossCallback(
-        log_dir="/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/controlnet",
+        log_dir=loss_logs_dir,
         log_every_n_steps=log_step
     )
 

@@ -43,13 +43,6 @@ class GenerateImagesCallback(pl.Callback):
 
                     save_image(self.to_tensor(grid).unsqueeze(0), img_path)
 
-                # if trainer.logger:
-                #     trainer.logger.experiment.add_image(
-                #         f"generated_images/step_{global_step}",
-                #         self.to_tensor(generated_images[0]),
-                #         global_step
-                #     )
-
                 print(f"Logged generated images at step {global_step}")
             pl_module.train()
 

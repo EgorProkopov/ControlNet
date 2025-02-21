@@ -17,7 +17,7 @@ from src.image2image_gen.common.callbacks import GenerateImagesCallback
 
 class ControlNetLightningModule(BaseDiffusionLightningModule):
     def __init__(self, vae, unet, controlnet, text_encoder, tokenizer, noise_scheduler, accelerator, lr, num_training_steps):
-        super().__init__(vae, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps)
+        super().__init__(vae, unet, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps)
         self.controlnet = controlnet
         self.vae = vae
         self.unet = unet

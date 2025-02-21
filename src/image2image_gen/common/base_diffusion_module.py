@@ -5,9 +5,10 @@ from diffusers.optimization import get_cosine_schedule_with_warmup
 
 
 class BaseDiffusionLightningModule(pl.LightningModule):
-    def __init__(self, vae, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps):
+    def __init__(self, vae, unet, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps):
         super().__init__()
         self.vae = vae
+        self.unet = unet
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
         self.noise_scheduler = noise_scheduler

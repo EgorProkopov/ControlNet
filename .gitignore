@@ -145,3 +145,4 @@ dmypy.json
 /image_log
 /lightning_logs
 /test_imgs
+.DS_Store
