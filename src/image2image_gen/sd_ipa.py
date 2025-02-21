@@ -9,7 +9,7 @@ from accelerate import Accelerator
 from lightning.pytorch import Trainer
 from diffusers import StableDiffusionPipeline, AutoencoderKL, UNet2DConditionModel, \
     DDPMScheduler, DDIMScheduler
-from transformers import AutoTokenizer, CLIPTextModel, CLIPVisionModelWithProjection
+from transformers import AutoTokenizer, CLIPTextModel, CLIPVisionModelWithProjection, CLIPImageProcessor
 
 from src.data.img2img_data_module import ControlNetDataModule
 from src.image2image_gen.common.base_diffusion_module import BaseDiffusionLightningModule
@@ -296,6 +296,7 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
             image_proj_model=self.image_proj,
             adapter_modules=adapter_modules
         )
+        self.image_processor = CLIPImageProcessor()
         self.image_encoder = image_encoder
         self.image_encoder.requires_grad_(False)
 
@@ -355,6 +356,19 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
         for attn_processor in self.pipe.unet.attn_processors.values():
             if isinstance(attn_processor, IPAttnProcessor):
                 attn_processor.scale = scale
+
+    @torch.inference_mode()
+    def get_image_embeds(self, pil_image=None, clip_image_embeds=None):
+        if pil_image is not None:
+            if isinstance(pil_image, Image.Image):
+                pil_image = [pil_image]
+            clip_image = self.image_processor(images=pil_image, return_tensors="pt").pixel_values
+            clip_image_embeds = self.image_encoder(clip_image.to(self.device, dtype=torch.float16)).image_embeds
+        else:
+            clip_image_embeds = clip_image_embeds.to(self.device, dtype=torch.float16)
+        image_prompt_embeds = self.image_proj(clip_image_embeds)
+        uncond_image_prompt_embeds = self.image_proj(torch.zeros_like(clip_image_embeds))
+        return image_prompt_embeds, uncond_image_prompt_embeds
 
     @torch.no_grad()
     def inference(
