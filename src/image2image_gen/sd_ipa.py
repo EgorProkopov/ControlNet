@@ -326,59 +326,7 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
 
     @torch.no_grad()
     def inference(self, captions, conditions, num_inference_steps=100, guidance_scale=7.5, height=512, width=512):
-        device = self.device
 
-        image_embeds = self.image_encoder(conditions).image_embeds
-        ip_tokens = self.ip_adapter.image_proj_model(image_embeds)
-
-        text_inputs = self.tokenizer(
-            captions,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            truncation=True,
-            return_tensors="pt"
-        )
-        text_input_ids = text_inputs.input_ids.to(device)
-
-        text_embeddings = self.text_encoder(text_input_ids)[0]
-
-        encoder_hidden_states = torch.cat([text_embeddings, ip_tokens], dim=1)
-
-        latents = torch.randn(
-            (len(captions), 4, height // 8, width // 8),
-            device=device,
-            dtype=text_embeddings.dtype
-        )
-
-        self.noise_scheduler.set_timesteps(num_inference_steps, device=device)
-
-        for t in self.noise_scheduler.timesteps:
-            latent_model_input = torch.cat([latents] * 2)
-            latent_model_input = self.noise_scheduler.scale_model_input(latent_model_input, t)
-
-            noise_pred = self.ip_adapter.unet(
-                latent_model_input,
-                t,
-                encoder_hidden_states=encoder_hidden_states.repeat_interleave(2, dim=0),
-                return_dict=False,
-            )[0]
-
-            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-
-            latents = self.noise_scheduler.step(noise_pred, t, latents).prev_sample
-
-        # Декодируем
-        images = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-        images = (images / 2 + 0.5).clamp(0, 1)
-        images = images.cpu().permute(0, 2, 3, 1).float().numpy()
-
-        pil_images = []
-        for image in images:
-            pil_image = Image.fromarray((image * 255).round().astype("uint8"))
-            pil_images.append(pil_image)
-
-        return pil_images
 
 
 if __name__ == "__main__":
