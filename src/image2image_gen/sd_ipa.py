@@ -362,6 +362,10 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
             negative_prompt="best quality regular shapes even surface round metallicslippery polished smooth",
             num_inference_steps=100, guidance_scale=7.5, scale=1.0, num_samples=4, seed=None
     ):
+        """
+            Generate images in inference mode
+            Copied from https://github.com/tencent-ailab/IP-Adapter/blob/main/ip_adapter/ip_adapter.py
+        """
         self.set_scale(scale)
 
         if pil_image is not None:
