@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 import torch.nn as nn
 
@@ -6,7 +8,7 @@ from PIL import Image
 from accelerate import Accelerator
 from lightning.pytorch import Trainer
 from diffusers import StableDiffusionPipeline, AutoencoderKL, UNet2DConditionModel, \
-    DDPMScheduler
+    DDPMScheduler, DDIMScheduler
 from transformers import AutoTokenizer, CLIPTextModel, CLIPVisionModelWithProjection
 
 from src.data.img2img_data_module import ControlNetDataModule
@@ -283,7 +285,6 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
     def __init__(self, vae, unet, text_encoder, tokenizer, image_encoder, noise_scheduler, lr, num_training_steps):
         super().__init__(vae, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps)
 
-        # Инициализация компонентов IP-Adapter
         adapter_modules = init_adapter_modules(unet)
         self.image_proj = ImageProjModel(
             cross_attention_dim=unet.config.cross_attention_dim,
@@ -298,23 +299,38 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
         self.image_encoder = image_encoder
         self.image_encoder.requires_grad_(False)
 
+        inference_noise_scheduler = DDIMScheduler(
+            num_train_timesteps=1000,
+            beta_start=0.00095,
+            beta_end=0.016,
+            beta_schedule="scaled_linear",
+            clip_sample=False,
+            set_alpha_to_one=False,
+            steps_offset=1,
+        )
+
+        self.pipe = StableDiffusionPipeline(
+            vae=vae,
+            unet=unet,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            scheduler=inference_noise_scheduler,
+            safety_checker=None,
+            feature_extractor=None,
+        )
+
     def forward(self, images, captions, conditions):
-        # Кодирование латентов
         latents = self.vae.encode(images).latent_dist.sample()
         latents = latents * self.vae.config.scaling_factor
 
-        # Текстовые эмбеддинги
         text_embeddings = self.encode_text(captions)
 
-        # Кодирование изображений условий
         image_embeds = self.image_encoder(conditions)
 
-        # Добавление шума
         noise = torch.randn_like(latents)
         timesteps = torch.randint(0, self.noise_scheduler.num_train_timesteps, (images.shape[0],), device=self.device)
         noisy_latents = self.add_noise(latents, noise, timesteps)
 
-        # Предсказание шума
         noise_pred = self.ip_adapter(
             noisy_latents,
             timesteps,
@@ -324,9 +340,75 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
 
         return noise_pred, noise
 
-    @torch.no_grad()
-    def inference(self, captions, conditions, num_inference_steps=100, guidance_scale=7.5, height=512, width=512):
+    def get_generator(self, seed, device):
+        if seed is not None:
+            if isinstance(seed, list):
+                generator = [torch.Generator(device).manual_seed(seed_item) for seed_item in seed]
+            else:
+                generator = torch.Generator(device).manual_seed(seed)
+        else:
+            generator = None
 
+        return generator
+
+    def set_scale(self, scale):
+        for attn_processor in self.pipe.unet.attn_processors.values():
+            if isinstance(attn_processor, IPAttnProcessor):
+                attn_processor.scale = scale
+
+    @torch.no_grad()
+    def inference(
+            self, pil_image, prompt, clip_image_embeds=None,
+            negative_prompt="best quality regular shapes even surface round metallicslippery polished smooth",
+            num_inference_steps=100, guidance_scale=7.5, scale=1.0, num_samples=4, seed=None
+    ):
+        self.set_scale(scale)
+
+        if pil_image is not None:
+            num_prompts = 1 if isinstance(pil_image, Image.Image) else len(pil_image)
+        else:
+            num_prompts = clip_image_embeds.size(0)
+
+
+        if negative_prompt is None:
+            negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
+
+        if not isinstance(prompt, List):
+            prompt = [prompt] * num_prompts
+        if not isinstance(negative_prompt, List):
+            negative_prompt = [negative_prompt] * num_prompts
+
+        image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(
+            pil_image=pil_image, clip_image_embeds=clip_image_embeds
+        )
+        bs_embed, seq_len, _ = image_prompt_embeds.shape
+        image_prompt_embeds = image_prompt_embeds.repeat(1, num_samples, 1)
+        image_prompt_embeds = image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
+        uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1)
+        uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
+
+        with torch.inference_mode():
+            prompt_embeds_, negative_prompt_embeds_ = self.pipe.encode_prompt(
+                prompt,
+                device=self.device,
+                num_images_per_prompt=num_samples,
+                do_classifier_free_guidance=True,
+                negative_prompt=negative_prompt,
+            )
+            prompt_embeds = torch.cat([prompt_embeds_, image_prompt_embeds], dim=1)
+            negative_prompt_embeds = torch.cat([negative_prompt_embeds_, uncond_image_prompt_embeds], dim=1)
+
+        generator = self.get_generator(seed, self.device)
+
+        images = self.pipe(
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            generator=generator
+        ).images
+
+        return images
 
 
 if __name__ == "__main__":
