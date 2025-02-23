@@ -10,11 +10,11 @@ from lightning.pytorch import Trainer
 from accelerate import Accelerator
 
 from src.data.data_modules import Image2ImageDataModule
-from src.common.callbacks import GenerateImagesCallback, TrainingLossCallback, SaveWeightsCallback
-from src.common.base_diffusion_module import BaseDiffusionLightningModule
+from src.common.callbacks import GenerateImage2ImageCallback, TrainingLossCallback, SaveWeightsCallback
+from src.common.base_diffusion_module import BaseDiffusionImage2ImageLightningModule
 
 
-class ControlNetLightningModule(BaseDiffusionLightningModule):
+class ControlNetLightningModule(BaseDiffusionImage2ImageLightningModule):
     def __init__(self, vae, unet, controlnet, text_encoder, tokenizer, noise_scheduler, accelerator, lr, num_training_steps):
         super().__init__(vae, unet, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps)
         self.controlnet = controlnet
@@ -80,7 +80,7 @@ class ControlNetLightningModule(BaseDiffusionLightningModule):
 
 
 if __name__ == "__main__":
-    config = OmegaConf.load("config.yaml")
+    config = OmegaConf.load("/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/configs/controlnet_config.yaml")
 
     pretrained_model_name = config.base_model.pretrained_model_name
 
@@ -131,7 +131,7 @@ if __name__ == "__main__":
 
     model, data_module = accelerator.prepare([model, data_module])
 
-    log_callback = GenerateImagesCallback(
+    log_callback = GenerateImage2ImageCallback(
         log_dir=images_logs_dir,
         log_every_n_steps=log_images_step
     )
@@ -141,7 +141,7 @@ if __name__ == "__main__":
     )
     save_callback = SaveWeightsCallback(
         log_dir=weights_logs_dir,
-        modules_to_save=["ip_adapter"],
+        modules_to_save=["controlnet"],
         log_every_n_steps=log_weights_step
     )
 

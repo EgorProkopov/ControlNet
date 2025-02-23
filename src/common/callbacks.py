@@ -10,7 +10,40 @@ from torchvision.transforms import ToTensor, ToPILImage
 from torchvision.utils import save_image
 
 
-class GenerateImagesCallback(pl.Callback):
+class GenerateText2ImageCallback(pl.Callback):
+    def __init__(self, log_dir, log_every_n_steps=1000):
+        super().__init__()
+        self.log_dir = log_dir
+        self.log_every_n_steps = log_every_n_steps
+        self.to_tensor = ToTensor()
+        self.to_pil = ToPILImage()
+        os.makedirs(log_dir, exist_ok=True)
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        global_step = trainer.global_step
+
+        if global_step % self.log_every_n_steps == 0 and global_step > 0:
+            pl_module.eval()
+            with torch.no_grad():
+                captions = batch["caption"]
+                captions = captions
+
+                generated_images = pl_module.inference(captions=captions)
+                generated_images = np.array(generated_images)
+
+                for i, img in enumerate(generated_images):
+                    img_path = os.path.join(self.log_dir, f"step_{global_step}_image_{i}.png")
+
+                    pil_generated_img = self.to_pil(img)
+                    grid = make_image_grid([pil_generated_img], rows=1, cols=1)
+
+                    save_image(self.to_tensor(grid).unsqueeze(0), img_path)
+
+                print(f"Logged generated images at step {global_step}")
+            pl_module.train()
+
+
+class GenerateImage2ImageCallback(pl.Callback):
     def __init__(self, log_dir, log_every_n_steps=1000):
         super().__init__()
         self.log_dir = log_dir

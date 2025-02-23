@@ -10,7 +10,8 @@ from lightning.pytorch import Trainer
 
 
 from src.common.base_diffusion_module import BaseDiffusionLightningModule
-from src.common.callbacks import GenerateImagesCallback, TrainingLossCallback, SaveWeightsCallback
+from src.common.callbacks import GenerateImage2ImageCallback, TrainingLossCallback, SaveWeightsCallback, \
+    GenerateText2ImageCallback
 from src.data.data_modules import Text2ImageDataModule
 
 
@@ -45,7 +46,7 @@ class StableDiffusionLightningModule(BaseDiffusionLightningModule):
             feature_extractor=None
         )
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-        pipeline.to(device)
+        # pipeline.to(device)
         # pipeline.set_progress_bar_config(disable=True)
 
         generated_images = pipeline(
@@ -56,7 +57,7 @@ class StableDiffusionLightningModule(BaseDiffusionLightningModule):
 
 
 if __name__ == "__main__":
-    config = OmegaConf.load("config.yaml")
+    config = OmegaConf.load("/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/configs/sd_config.yaml")
 
     pretrained_model_name = config.base_model.pretrained_model_name
 
@@ -66,9 +67,7 @@ if __name__ == "__main__":
     weights_logs_dir = config.out_directories.weights_logs_dir
 
     train_images_dir = config.datasets_dirs.train_images_dir
-    train_masks_dir = config.datasets_dirs.train_masks_dir
     val_images_dir = config.datasets_dirs.val_images_dir
-    val_masks_dir = config.datasets_dirs.val_masks_dir
 
     num_epochs = config.train_params.num_epochs
     learning_rate = config.train_params.learning_rate
@@ -89,12 +88,12 @@ if __name__ == "__main__":
     vae = AutoencoderKL.from_pretrained(pretrained_model_name, subfolder="vae")
     vae.requires_grad_(False)
     unet = UNet2DConditionModel.from_pretrained(pretrained_model_name, subfolder="unet")
-    unet.requires_grad_(False)
+    unet.train()
 
     noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
 
     data_module = Text2ImageDataModule(
-        train_images_dir, train_masks_dir, val_images_dir, val_masks_dir,
+        train_images_dir, val_images_dir, caption="froth flotation bubbles",
         batch_size=batch_size, image_size=image_size
     )
 
@@ -106,7 +105,7 @@ if __name__ == "__main__":
 
     model, data_module = accelerator.prepare([model, data_module])
 
-    log_callback = GenerateImagesCallback(
+    log_callback = GenerateText2ImageCallback(
         log_dir=images_logs_dir,
         log_every_n_steps=log_images_step
     )
@@ -127,6 +126,7 @@ if __name__ == "__main__":
         precision=precision,
         strategy="auto",
         default_root_dir=output_dir,
+        log_every_n_steps=10000,
         # accumulate_grad_batches=2,
         callbacks=[log_callback, loss_callback, save_callback]
     )

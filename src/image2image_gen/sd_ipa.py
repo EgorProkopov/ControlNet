@@ -13,8 +13,8 @@ from diffusers import StableDiffusionPipeline, AutoencoderKL, UNet2DConditionMod
 from transformers import AutoTokenizer, CLIPTextModel, CLIPVisionModelWithProjection, CLIPImageProcessor
 
 from src.data.data_modules import Image2ImageDataModule
-from src.common.base_diffusion_module import BaseDiffusionLightningModule
-from src.common.callbacks import GenerateImagesCallback, TrainingLossCallback, SaveWeightsCallback
+from src.common.base_diffusion_module import BaseDiffusionLightningModule, BaseDiffusionImage2ImageLightningModule
+from src.common.callbacks import GenerateImage2ImageCallback, TrainingLossCallback, SaveWeightsCallback
 
 
 class AttnProcessor(nn.Module):
@@ -275,7 +275,7 @@ class IPAdapter(nn.Module):
         print(f"Successfully loaded weights from checkpoint {ckpt_path}")
 
 
-class IPAdapterLightningModule(BaseDiffusionLightningModule):
+class IPAdapterLightningModule(BaseDiffusionImage2ImageLightningModule):
     def __init__(self, vae, unet, text_encoder, tokenizer, image_encoder, noise_scheduler, lr, num_training_steps):
         super().__init__(vae, unet, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps)
 
@@ -488,7 +488,7 @@ if __name__ == "__main__":
 
     model, data_module = accelerator.prepare([model, data_module])
 
-    log_callback = GenerateImagesCallback(
+    log_callback = GenerateImage2ImageCallback(
         log_dir=images_logs_dir,
         log_every_n_steps=log_images_step
     )
@@ -509,6 +509,7 @@ if __name__ == "__main__":
         precision=precision,
         strategy="auto",
         default_root_dir=output_dir,
+        log_every_n_steps=10000,
         # accumulate_grad_batches=2,
         callbacks=[log_callback, loss_callback, save_callback]
     )

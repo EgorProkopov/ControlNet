@@ -9,9 +9,7 @@ out_directories:
 
 datasets_dirs:
   train_images_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/images"
-  train_masks_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/masks"
   val_images_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/images"
-  val_masks_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/masks"
 
 train_params:
   num_epochs: 2

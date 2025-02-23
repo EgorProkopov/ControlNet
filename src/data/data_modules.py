@@ -50,18 +50,17 @@ class Image2ImageDataModule(BaseDataModule):
 
 
 class Text2ImageDataModule(BaseDataModule):
-    def __init__(self, train_images_dir, train_masks_dir, val_images_dir, val_masks_dir, batch_size, image_size, num_workers=6):
+    def __init__(self, train_images_dir, val_images_dir, caption, batch_size, image_size, num_workers=6):
         self.train_images_dir = train_images_dir
-        self.train_masks_dir = train_masks_dir
         self.val_images_dir = val_images_dir
-        self.val_masks_dir = val_masks_dir
+        self.caption = caption
         self.batch_size = batch_size
         self.image_size = image_size
 
         self.num_workers = num_workers
 
-        train_dataset = Text2ImageDataset(self.train_images_dir, self.train_masks_dir, width=self.image_size, height=self.image_size)
-        val_dataset = Text2ImageDataset(self.val_images_dir, self.val_masks_dir, width=self.image_size, height=self.image_size)
+        train_dataset = Text2ImageDataset(self.train_images_dir, self.caption, width=self.image_size, height=self.image_size)
+        val_dataset = Text2ImageDataset(self.val_images_dir, self.caption, width=self.image_size, height=self.image_size)
 
         super().__init__(train_dataset, val_dataset, batch_size, image_size, num_workers)
 
