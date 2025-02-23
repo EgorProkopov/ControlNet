@@ -86,3 +86,34 @@ class TrainingLossCallback(pl.Callback):
         plt.title(f'Final Training and Validation Loss')
         plt.savefig(os.path.join(self.log_dir, 'final_loss_plot.png'))
         plt.close()
+
+
+class SaveWeightsCallback(pl.Callback):
+    def __init__(self, log_dir, modules_to_save, log_every_n_steps=1000):
+        self.save_dir = log_dir
+        self.modules_to_save = modules_to_save
+        self.log_every_n_steps = log_every_n_steps
+        os.makedirs(self.save_dir, exist_ok=True)
+
+    def save_module(self, module, module_name, global_step):
+        """
+        Save trainable weights of a specific module.
+        """
+        trainable_params = {name: param.cpu() for name, param in module.named_parameters() if param.requires_grad}
+        if trainable_params:
+            save_dir = os.path.join(self.save_dir, f"step_{global_step}")
+            save_path = os.path.join(save_dir, f"{module_name}_weights.pt")
+            os.makedirs(save_dir, exist_ok=True)
+            torch.save(trainable_params, save_path)
+            print(f"Saved {module_name} trainable weights to {save_path}")
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        global_step = trainer.global_step
+        if global_step % self.log_every_n_steps == 0 and global_step > 0:
+            for module_name in self.modules_to_save:
+                module = getattr(pl_module, module_name, None)
+                if module:
+                    self.save_module(module, module_name, trainer.global_step)
+                else:
+                    print(f"Module '{module_name}' not found in the model.")
+

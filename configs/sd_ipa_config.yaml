@@ -1,0 +1,27 @@
+base_model:
+  pretrained_model_name: "runwayml/stable-diffusion-v1-5"
+
+out_directories:
+  output_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/sd_ipa"
+  images_logs_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/sd_ipa/generated_images"
+  loss_logs_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/sd_ipa/loss_plots"
+  weights_logs_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/sd_ipa/weights"
+
+datasets_dirs:
+  train_images_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/images"
+  train_masks_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/masks"
+  val_images_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/images"
+  val_masks_dir: "/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/masks"
+
+train_params:
+  num_epochs: 2
+  learning_rate: 1e-4
+  batch_size: 4
+  image_size: 224
+  log_images_step: 100
+  log_loss_step: 100
+  log_weights_step: 100
+
+hardware:
+  device: "mps"
+  precision: "bf16"

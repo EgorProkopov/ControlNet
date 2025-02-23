@@ -1,19 +1,20 @@
 from typing import List
 
+from PIL import Image
+from omegaconf import OmegaConf
+
 import torch
 import torch.nn as nn
 
-import lightning.pytorch as pl
-from PIL import Image
 from accelerate import Accelerator
 from lightning.pytorch import Trainer
 from diffusers import StableDiffusionPipeline, AutoencoderKL, UNet2DConditionModel, \
-    DDPMScheduler, DDIMScheduler
+    DDPMScheduler
 from transformers import AutoTokenizer, CLIPTextModel, CLIPVisionModelWithProjection, CLIPImageProcessor
 
 from src.data.img2img_data_module import ControlNetDataModule
-from src.image2image_gen.common.base_diffusion_module import BaseDiffusionLightningModule
-from src.image2image_gen.common.callbacks import GenerateImagesCallback, TrainingLossCallback
+from src.common.base_diffusion_module import BaseDiffusionLightningModule
+from src.common.callbacks import GenerateImagesCallback, TrainingLossCallback, SaveWeightsCallback
 
 
 class AttnProcessor(nn.Module):
@@ -372,7 +373,7 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
         )
         pipe = self.set_scale(pipe, scale)
 
-        pipe = pipe.to(self.device)
+        # pipe = pipe.to(self.device)
 
         if conditions is not None:
             num_prompts = 1 if isinstance(conditions, Image.Image) else len(conditions)
@@ -421,15 +422,30 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
 
 
 if __name__ == "__main__":
-    pretrained_model_name = "runwayml/stable-diffusion-v1-5"
-    output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/sd_ipa"
-    images_logs_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/sd_ipa/generated_images"
-    loss_logs_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/sd_ipa"
-    num_epochs = 2
-    learning_rate = 5e-5
-    batch_size = 12
-    image_size = 224
-    log_step = 250
+    config = OmegaConf.load("/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/configs/sd_ipa_config.yaml")
+
+    pretrained_model_name = config.base_model.pretrained_model_name
+
+    output_dir = config.out_directories.output_dir
+    images_logs_dir = config.out_directories.images_logs_dir
+    loss_logs_dir = config.out_directories.loss_logs_dir
+    weights_logs_dir = config.out_directories.weights_logs_dir
+
+    train_images_dir = config.datasets_dirs.train_images_dir
+    train_masks_dir = config.datasets_dirs.train_masks_dir
+    val_images_dir = config.datasets_dirs.val_images_dir
+    val_masks_dir = config.datasets_dirs.val_masks_dir
+
+    num_epochs = config.train_params.num_epochs
+    learning_rate = config.train_params.learning_rate
+    batch_size = config.train_params.batch_size
+    image_size = config.train_params.image_size
+    log_images_step = config.train_params.log_images_step
+    log_loss_step = config.train_params.log_loss_step
+    log_weights_step = config.train_params.log_weights_step
+
+    device = config.hardware.device
+    precision = config.hardware.precision
 
     accelerator = Accelerator()
 
@@ -467,12 +483,6 @@ if __name__ == "__main__":
     vae.requires_grad_(False)
     unet.requires_grad_(False)
 
-    train_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/images"
-    train_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/masks"
-
-    val_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/images"
-    val_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/masks"
-
     data_module = ControlNetDataModule(
         train_images_dir, train_masks_dir, val_images_dir, val_masks_dir,
         batch_size=batch_size, image_size=image_size
@@ -487,24 +497,28 @@ if __name__ == "__main__":
 
     log_callback = GenerateImagesCallback(
         log_dir=images_logs_dir,
-        log_every_n_steps=log_step
+        log_every_n_steps=log_images_step
     )
     loss_callback = TrainingLossCallback(
         log_dir=loss_logs_dir,
-        log_every_n_steps=log_step
+        log_every_n_steps=log_loss_step
+    )
+    save_callback = SaveWeightsCallback(
+        log_dir=weights_logs_dir,
+        modules_to_save=["ip_adapter"],
+        log_every_n_steps=log_weights_step
     )
 
     trainer = Trainer(
         max_epochs=num_epochs,
-        accelerator='mps',
+        accelerator=device,
         devices=accelerator.num_processes,
-        precision='bf16',
+        precision=precision,
         strategy="auto",
         default_root_dir=output_dir,
-        log_every_n_steps=log_step,
         # accumulate_grad_batches=2,
-        callbacks=[log_callback, loss_callback]
+        callbacks=[log_callback, loss_callback, save_callback]
     )
 
     trainer.fit(model, datamodule=data_module)
-    print(f"Training complete! Model saved to: {output_dir}")
+    print(f"Training complete! Model saved to: {weights_logs_dir}")
