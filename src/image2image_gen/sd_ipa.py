@@ -76,9 +76,7 @@ class AttnProcessor(nn.Module):
         hidden_states = torch.bmm(attention_probs, value)
         hidden_states = attn.batch_to_head_dim(hidden_states)
 
-        # linear proj
         hidden_states = attn.to_out[0](hidden_states)
-        # dropout
         hidden_states = attn.to_out[1](hidden_states)
 
         if input_ndim == 4:
@@ -170,7 +168,6 @@ class IPAttnProcessor(nn.Module):
         hidden_states = torch.bmm(attention_probs, value)
         hidden_states = attn.batch_to_head_dim(hidden_states)
 
-        # for ip-adapter
         ip_key = self.to_k_ip(ip_hidden_states)
         ip_value = self.to_v_ip(ip_hidden_states)
 
@@ -184,9 +181,7 @@ class IPAttnProcessor(nn.Module):
 
         hidden_states = hidden_states + self.scale * ip_hidden_states
 
-        # linear proj
         hidden_states = attn.to_out[0](hidden_states)
-        # dropout
         hidden_states = attn.to_out[1](hidden_states)
 
         if input_ndim == 4:
@@ -275,7 +270,6 @@ class IPAdapter(nn.Module):
 
         new_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
 
-        # Verify if the weights have changed
         assert orig_ip_proj_sum != new_ip_proj_sum, "Weights of image_proj_model did not change!"
 
         print(f"Successfully loaded weights from checkpoint {ckpt_path}")
@@ -372,8 +366,7 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
             feature_extractor=None,
         )
         pipe = self.set_scale(pipe, scale)
-
-        # pipe = pipe.to(self.device)
+        pipe = pipe.to(self.device)
 
         if conditions is not None:
             num_prompts = 1 if isinstance(conditions, Image.Image) else len(conditions)
