@@ -365,7 +365,7 @@ class IPAdapterLightningModule(BaseDiffusionImage2ImageLightningModule):
             safety_checker=None,
             feature_extractor=None,
         )
-        pipe = self.set_scale(pipe, scale)
+        # pipe = self.set_scale(pipe, scale)
         pipe = pipe.to(self.device)
 
         if conditions is not None:

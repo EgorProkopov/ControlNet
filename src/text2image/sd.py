@@ -34,7 +34,7 @@ class StableDiffusionLightningModule(BaseDiffusionLightningModule):
 
         return noise_pred, noise
 
-    def inference(self, captions, num_inference_steps=100):
+    def inference(self, captions, num_inference_steps=50):
         pipeline = StableDiffusionPipeline(
             tokenizer=self.tokenizer,
             text_encoder=self.text_encoder,
@@ -46,7 +46,7 @@ class StableDiffusionLightningModule(BaseDiffusionLightningModule):
             feature_extractor=None
         )
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-        # pipeline.to(device)
+        pipeline = pipeline.to(device)
         # pipeline.set_progress_bar_config(disable=True)
 
         generated_images = pipeline(

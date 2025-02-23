@@ -14,9 +14,9 @@ datasets_dirs:
 train_params:
   num_epochs: 2
   learning_rate: 1e-4
-  batch_size: 4
+  batch_size: 2
   image_size: 224
-  log_images_step: 100
+  log_images_step: 50
   log_loss_step: 100
   log_weights_step: 100
 
