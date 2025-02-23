@@ -1,159 +1,135 @@
-from tqdm.auto import tqdm
+from omegaconf import OmegaConf
 
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-
 from transformers import AutoTokenizer, CLIPTextModel
-
 from diffusers import DDPMScheduler, UNet2DConditionModel
 from diffusers import AutoencoderKL
-from diffusers.optimization import get_cosine_schedule_with_warmup
-
+from diffusers import StableDiffusionPipeline
 from accelerate import Accelerator
-
-from peft import LoraConfig, get_peft_model
-
-from dataset import MasksDataset
+from lightning.pytorch import Trainer
 
 
-class StableDiffusion(nn.Module):
-    def __init__(self, vae, unet, text_encoder, tokenizer, noise_scheduler):
-        super().__init__()
-
-        self.tokenizer = tokenizer
-        self.text_encoder = text_encoder
-        self.vae = vae
-        self.unet = unet
-
-        self.noise_scheduler = noise_scheduler
-
-    def forward(self, images, captions, conditions):
-        self.text_encoder = self.text_encoder.to(dtype=torch.float16)
-        self.vae = self.vae.to(dtype=torch.float16)
-        self.unet = self.unet.to(dtype=torch.float16)
+from src.common.base_diffusion_module import BaseDiffusionLightningModule
+from src.common.callbacks import GenerateImagesCallback, TrainingLossCallback, SaveWeightsCallback
+from src.data.data_modules import Text2ImageDataModule
 
 
-        latents = self.vae.encode(images).latent_dist.sample()
-        latents = latents * self.vae.config.scaling_factor
+class StableDiffusionLightningModule(BaseDiffusionLightningModule):
+    def __init__(self, vae, unet, text_encoder, tokenizer, noise_scheduler, accelerator, lr, num_training_steps):
+        super().__init__(vae, unet, text_encoder, tokenizer, noise_scheduler, lr, num_training_steps)
 
-        captions = tokenize_caption(captions, self.tokenizer)
-        text_embeddings = self.text_encoder(captions.to(images.device), return_dict=False)[0]
+        self.accelerator = accelerator
 
-        noise = torch.randn_like(latents).to(device=images.device, dtype=torch.float16)
+    def forward(self, images, captions):
+        latents = self.vae.encode(images).latent_dist.sample() * 0.18215
+        text_embeddings = self.encode_text(captions)
+
+        noise = torch.randn_like(latents)
         timesteps = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (latents.shape[0],),
                                   device=images.device).long()
         noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
 
-        noise_pred = self.unet(
-            noisy_latents,
-            timesteps,
-            encoder_hidden_states=text_embeddings,
-            return_dict=True
-        )['sample']
+        noise_pred = self.unet(noisy_latents, timesteps, text_embeddings).sample
 
         return noise_pred, noise
 
+    def inference(self, captions, num_inference_steps=100):
+        pipeline = StableDiffusionPipeline(
+            tokenizer=self.tokenizer,
+            text_encoder=self.text_encoder,
+            vae=self.vae,
+            unet=self.unet,
+            scheduler=self.noise_scheduler,
+            requires_safety_checker=False,
+            safety_checker=None,
+            feature_extractor=None
+        )
+        device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        pipeline.to(device)
+        # pipeline.set_progress_bar_config(disable=True)
 
-def tokenize_caption(caption, tokenizer):
-    return tokenizer(caption, padding="max_length", truncation=True, max_length=77, return_tensors="pt").input_ids
-
-
-def training(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerator, output_dir, num_epochs=3):
-    for epoch in range(num_epochs):
-        for step, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
-            images = batch["pixel_values"].to(accelerator.device, dtype=torch.float16).permute(0, 3, 1, 2)
-            conditions = batch["conditioning_pixel_values"].to(accelerator.device, dtype=torch.float16).permute(0, 3, 1, 2)
-            captions = batch["caption"]
-
-            noise_pred, noise = model(images, captions, conditions)
-
-            loss = criterion(noise_pred, noise)
-            accelerator.backward(loss)
-
-            # loss.backward()
-            model.float()
-
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-
-            if step % 1000 == 0:
-                print(f"Epoch {epoch}, Step {step}, Loss: {loss.item()}")
-                # print(noise_pred)
-
-        model.unet.save_pretrained(f"{output_dir}/checkpoint-epoch_{epoch}/unet")
-
-        print(f"Epoch {epoch} completed and checkpoint saved.")
-
-
-def main():
-    pretrained_model_name = "runwayml/stable-diffusion-v1-5"
-    output_dir = r"/out/stable_diffusion"
-    num_epochs = 10
-    learning_rate = 5e-6
-    batch_size = 6
-    image_size = 256
-
-    accelerator = Accelerator()
-
-    tokenizer = AutoTokenizer.from_pretrained(
-    "runwayml/stable-diffusion-v1-5",
-        subfolder="tokenizer",
-        use_fast=False,
-    )
-
-    text_encoder = CLIPTextModel.from_pretrained(
-       "runwayml/stable-diffusion-v1-5", subfolder="text_encoder"
-    )
-    vae = AutoencoderKL.from_pretrained(
-        "runwayml/stable-diffusion-v1-5", subfolder="vae"
-    )
-    unet = UNet2DConditionModel.from_pretrained(
-        "runwayml/stable-diffusion-v1-5", subfolder="unet"
-    )
-    criterion = nn.MSELoss()
-
-    noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
-
-    train_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/images"
-    train_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/masks"
-
-    # train_images_dir = r"F:\Internship\ITMO_ML\data\weakly_segmented\bubbles_split\valid\images"
-    # train_masks_dir = r"F:\Internship\ITMO_ML\data\weakly_segmented\bubbles_split\valid\masks"
-
-    train_dataset = MasksDataset(train_images_dir, train_masks_dir, width=image_size, height=image_size)
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
-
-    device = accelerator.device
-
-    text_encoder.eval()
-    vae.eval()
-    unet.train()
-
-    model = StableDiffusion(vae, unet, text_encoder, tokenizer, noise_scheduler)
-    model.to(device=device)
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-
-    lr_scheduler = get_cosine_schedule_with_warmup(
-        optimizer=optimizer,
-        num_warmup_steps=500,
-        num_training_steps=(len(train_dataloader) * num_epochs),
-    )
-
-    # model, train_dataloader, optimizer, lr_scheduler = accelerator.prepare(
-    #     [model, train_dataloader, optimizer, lr_scheduler]
-    # )
-    model.to(dtype=torch.float16)
-
-    training(model, train_dataloader, criterion, optimizer, lr_scheduler, accelerator, output_dir, num_epochs=num_epochs)
-
-    model.unet.save_pretrained(f"{output_dir}/final_unet")
-    torch.save(model.state_dict(), f"{output_dir}/final_model.pth")
-
-    print("Training complete! Model saved to:", output_dir)
+        generated_images = pipeline(
+            prompt=captions,
+            num_inference_steps=num_inference_steps,
+        ).images
+        return generated_images
 
 
 if __name__ == "__main__":
-    main()
+    config = OmegaConf.load("config.yaml")
+
+    pretrained_model_name = config.base_model.pretrained_model_name
+
+    output_dir = config.out_directories.output_dir
+    images_logs_dir = config.out_directories.images_logs_dir
+    loss_logs_dir = config.out_directories.loss_logs_dir
+    weights_logs_dir = config.out_directories.weights_logs_dir
+
+    train_images_dir = config.datasets_dirs.train_images_dir
+    train_masks_dir = config.datasets_dirs.train_masks_dir
+    val_images_dir = config.datasets_dirs.val_images_dir
+    val_masks_dir = config.datasets_dirs.val_masks_dir
+
+    num_epochs = config.train_params.num_epochs
+    learning_rate = config.train_params.learning_rate
+    batch_size = config.train_params.batch_size
+    image_size = config.train_params.image_size
+    log_images_step = config.train_params.log_images_step
+    log_loss_step = config.train_params.log_loss_step
+    log_weights_step = config.train_params.log_weights_step
+
+    device = config.hardware.device
+    precision = config.hardware.precision
+
+    accelerator = Accelerator()
+
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name, subfolder="tokenizer", use_fast=False)
+    text_encoder = CLIPTextModel.from_pretrained(pretrained_model_name, subfolder="text_encoder")
+    text_encoder.requires_grad_(False)
+    vae = AutoencoderKL.from_pretrained(pretrained_model_name, subfolder="vae")
+    vae.requires_grad_(False)
+    unet = UNet2DConditionModel.from_pretrained(pretrained_model_name, subfolder="unet")
+    unet.requires_grad_(False)
+
+    noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
+
+    data_module = Text2ImageDataModule(
+        train_images_dir, train_masks_dir, val_images_dir, val_masks_dir,
+        batch_size=batch_size, image_size=image_size
+    )
+
+    num_training_steps = num_epochs * len(data_module.train_dataloader())
+    model = StableDiffusionLightningModule(
+        vae, unet, text_encoder, tokenizer, noise_scheduler, accelerator,
+        lr=learning_rate, num_training_steps=num_training_steps
+    )
+
+    model, data_module = accelerator.prepare([model, data_module])
+
+    log_callback = GenerateImagesCallback(
+        log_dir=images_logs_dir,
+        log_every_n_steps=log_images_step
+    )
+    loss_callback = TrainingLossCallback(
+        log_dir=loss_logs_dir,
+        log_every_n_steps=log_loss_step
+    )
+    save_callback = SaveWeightsCallback(
+        log_dir=weights_logs_dir,
+        modules_to_save=["unet"],
+        log_every_n_steps=log_weights_step
+    )
+
+    trainer = Trainer(
+        max_epochs=num_epochs,
+        accelerator=device,
+        devices=accelerator.num_processes,
+        precision=precision,
+        strategy="auto",
+        default_root_dir=output_dir,
+        # accumulate_grad_batches=2,
+        callbacks=[log_callback, loss_callback, save_callback]
+    )
+
+    trainer.fit(model, datamodule=data_module)
+    print(f"Training complete! Model saved to: {weights_logs_dir}")

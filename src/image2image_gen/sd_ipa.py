@@ -12,7 +12,7 @@ from diffusers import StableDiffusionPipeline, AutoencoderKL, UNet2DConditionMod
     DDPMScheduler
 from transformers import AutoTokenizer, CLIPTextModel, CLIPVisionModelWithProjection, CLIPImageProcessor
 
-from src.data.img2img_data_module import ControlNetDataModule
+from src.data.data_modules import Image2ImageDataModule
 from src.common.base_diffusion_module import BaseDiffusionLightningModule
 from src.common.callbacks import GenerateImagesCallback, TrainingLossCallback, SaveWeightsCallback
 
@@ -350,7 +350,7 @@ class IPAdapterLightningModule(BaseDiffusionLightningModule):
     def inference(
             self, captions, conditions, clip_image_embeds=None,
             negative_prompt="best quality regular shapes even surface round metallicslippery polished smooth",
-            num_inference_steps=100, guidance_scale=7.5, scale=1.0, num_samples=1, seed=None
+            num_inference_steps=50, guidance_scale=7.5, scale=1.0, num_samples=1, seed=None
     ):
         """
             Generate images in inference mode
@@ -476,7 +476,7 @@ if __name__ == "__main__":
     vae.requires_grad_(False)
     unet.requires_grad_(False)
 
-    data_module = ControlNetDataModule(
+    data_module = Image2ImageDataModule(
         train_images_dir, train_masks_dir, val_images_dir, val_masks_dir,
         batch_size=batch_size, image_size=image_size
     )

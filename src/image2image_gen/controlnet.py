@@ -9,7 +9,7 @@ from diffusers import DDPMScheduler, AutoencoderKL, UNet2DConditionModel, Contro
 from lightning.pytorch import Trainer
 from accelerate import Accelerator
 
-from src.data.img2img_data_module import ControlNetDataModule
+from src.data.data_modules import Image2ImageDataModule
 from src.common.callbacks import GenerateImagesCallback, TrainingLossCallback, SaveWeightsCallback
 from src.common.base_diffusion_module import BaseDiffusionLightningModule
 
@@ -68,7 +68,7 @@ class ControlNetLightningModule(BaseDiffusionLightningModule):
         # pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         pipeline.to(device)
-        pipeline.set_progress_bar_config(disable=True)
+        # pipeline.set_progress_bar_config(disable=True)
 
 
         generated_images = pipeline(
@@ -82,28 +82,28 @@ class ControlNetLightningModule(BaseDiffusionLightningModule):
 if __name__ == "__main__":
     config = OmegaConf.load("config.yaml")
 
-    pretrained_model_name = "runwayml/stable-diffusion-v1-5"
+    pretrained_model_name = config.base_model.pretrained_model_name
 
-    output_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/controlnet"
-    images_logs_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/controlnet/generated_images"
-    loss_logs_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/controlnet/loss_plots"
-    weights_logs_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/ControlNet/out/logs/controlnet/weights"
+    output_dir = config.out_directories.output_dir
+    images_logs_dir = config.out_directories.images_logs_dir
+    loss_logs_dir = config.out_directories.loss_logs_dir
+    weights_logs_dir = config.out_directories.weights_logs_dir
 
-    train_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/images"
-    train_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/train/masks"
-    val_images_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/images"
-    val_masks_dir = r"/Users/egorprokopov/Documents/Work/ITMO_ML/data/bubbles/bubbles_split/valid/masks"
+    train_images_dir = config.datasets_dirs.train_images_dir
+    train_masks_dir = config.datasets_dirs.train_masks_dir
+    val_images_dir = config.datasets_dirs.val_images_dir
+    val_masks_dir = config.datasets_dirs.val_masks_dir
 
-    num_epochs = 2
-    learning_rate = 2e-5
-    batch_size = 1
-    image_size = 224
-    log_images_step = 100
-    log_loss_step = 100
-    log_weights_step = 100
+    num_epochs = config.train_params.num_epochs
+    learning_rate = config.train_params.learning_rate
+    batch_size = config.train_params.batch_size
+    image_size = config.train_params.image_size
+    log_images_step = config.train_params.log_images_step
+    log_loss_step = config.train_params.log_loss_step
+    log_weights_step = config.train_params.log_weights_step
 
-    device = "mps"
-    precision = "bf16"
+    device = config.hardware.device
+    precision = config.hardware.precision
 
     accelerator = Accelerator()
 
@@ -118,7 +118,7 @@ if __name__ == "__main__":
     noise_scheduler = DDPMScheduler(beta_start=0.0001, beta_end=0.02, num_train_timesteps=1000)
     # noise_scheduler = EulerDiscreteScheduler.from_pretrained(pretrained_model_name, subfolder="scheduler")
 
-    data_module = ControlNetDataModule(
+    data_module = Image2ImageDataModule(
         train_images_dir, train_masks_dir, val_images_dir, val_masks_dir,
         batch_size=batch_size, image_size=image_size
     )
@@ -157,4 +157,4 @@ if __name__ == "__main__":
     )
 
     trainer.fit(model, datamodule=data_module)
-    print(f"Training complete! Model saved to: {output_dir}")
+    print(f"Training complete! Model saved to: {weights_logs_dir}")
